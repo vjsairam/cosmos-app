@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cosmos-service
+  namespace: {{namespace}}
+  labels:
+    app: cosmos-service
+spec:
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: cosmos-service
+  template:
+    metadata:
+      labels:
+        app: cosmos-service
+    spec:
+      nodeSelector:
+        eks.amazonaws.com/nodegroup: {{nodegroup}}
+      containers:
+        - name: cosmos-service
+          image: {{image}}
+          ports:
+            - containerPort: 8080
+              name: web
+      imagePullSecrets:
+        - name: nexus-credentials
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: cosmos-service
+  namespace: {{namespace}}
+spec:
+  selector:
+    app: cosmos-service
+  type: NodePort
+  ports:
+    - name: web
+      protocol: TCP
+      port: 8080
+      targetPort: 8080

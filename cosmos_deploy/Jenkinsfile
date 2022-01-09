@@ -1,0 +1,57 @@
+def appNames = ["cosmos_deployment"]
+def githash
+def image
+def namespace
+
+pipeline {
+    options {
+        disableConcurrentBuilds()
+    }
+
+    agent any
+
+    environment {
+        def Tag = new Date().format("yy.MM.dd-HH.mm")
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                script {
+                        docker.withRegistry('https://nexus.clouddomain.com:9001/', 'nexus_creds') {
+							githash = sh(script: 'git rev-parse --short=4 HEAD', returnStdout: true).trim()
+                            checkout([
+                                    $class                           : 'GitSCM',
+                                    branches                         : scm.branches,
+                                    extensions                       : scm.extensions + [[$class: 'CleanCheckout'], [$class: 'WipeWorkspace']],
+                                    userRemoteConfigs                : [[credentialsId: 'service_account', url: 'https://github.com/vjsairam/cosmos-app.git']],
+                                    doGenerateSubmoduleConfigurations: false
+                            ])
+                        }
+					}
+				}
+			}
+
+        stage('Package, Tag & Deploy') {
+            steps {
+                script {
+                    docker.withRegistry('https://nexus.clouddomain.com:9001/', 'nexus_creds') {
+                            withCredentials([usernamePassword(credentialsId: 'service_account', passwordVariable: 'PASSWORD', usernameVariable: 'USERNAME')]) {
+                                sh("git tag -a dev/$Tag-${githash} -m 'Jenkins'")
+                                sh('git push https://clouddomain-service-account:${PASSWORD}@github.com/vjsairam/cosmos-app.git --tags')
+                            }
+                            namespace = "staging"
+                            for (int i = 0; i < appNames.size(); i++) {
+                                def appName = appNames[i]
+                                image = "nexus.clouddomain.com:9001/${appName}:$Tag-${githash}"
+                                sh "docker tag nexus.clouddomain.com:9001/${appName}:$Tag-${githash} ${image}"
+								docker.build("nexus.clouddomain.com:9001/${appName}:$Tag-${githash}", "-f ./cosmos_deploy/docker/Dockerfile.cosmos .").push()
+                                nodegroup = "clouddomain-dev"
+                                sh("cat cosmos_deploy/${appName}.yaml | sed 's@{{namespace}}@${namespace}@g' | sed 's@{{nodegroup}}@${nodegroup}@g' | sed 's@{{image}}@${image}@g' | kubectl apply -f - -n '${namespace}'")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

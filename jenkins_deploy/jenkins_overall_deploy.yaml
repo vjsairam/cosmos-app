@@ -1,0 +1,146 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins
+  namespace: operations 
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: operations
+  name: jenkins-master-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/exec", "pods/log", "persistentvolumeclaims"]
+  verbs: ["*"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: jenkins-rolebinding
+  namespace: operations
+subjects:
+- kind: ServiceAccount
+  name: jenkins
+  namespace: operations
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jenkins-master-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata: 
+  name: jenkins-ebs-pv
+  namespace: operations
+  labels:
+    type: amazonEBS
+spec:
+  storageClassName: gp2
+  capacity:
+    storage: 200Gi
+  persistentVolumeReclaimPolicy: Retain
+  accessModes:
+    - ReadWriteOnce
+  awsElasticBlockStore:
+    volumeID: vol-0e4c2c8984f127379
+    fsType: ext4 
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jenkins-ebs-pvc
+  namespace: operations
+spec:
+  storageClassName: gp2
+  resources:
+    requests:
+      storage: 200Gi
+  accessModes:
+    - ReadWriteOnce
+  selector:
+    matchLabels:
+      type: amazonEBS  
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jenkins
+  namespace: operations
+  labels:
+    app: jenkins
+spec:
+  selector:
+    matchLabels:
+      app: jenkins
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: jenkins
+    spec:
+      serviceAccountName: jenkins
+      containers:
+        - name: jenkin-master
+          image: nexus.clouddomain.com:9001/jenkins:v4
+          imagePullPolicy: Always
+          ports:
+            - name: http-port
+              containerPort: 8080
+            - name: jnlp-port
+              containerPort: 50000
+          volumeMounts:
+            - name: jenkins-vol
+              mountPath: /var/jenkins_home
+      initContainers:  
+        - name: increase-fd-ulimit
+          image: busybox
+          command: ["sh", "-c", "ulimit -n 65536"]
+          securityContext:
+            privileged: true
+      volumes:
+        - name: jenkins-vol
+          persistentVolumeClaim:
+            claimName: jenkins-ebs-pvc
+      imagePullSecrets:
+        - name: nexus-image-pull
+      nodeSelector:
+        Environment: Operations
+
+---
+# Service for accessing jenkins-UI
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins
+  namespace: operations
+spec:
+  type: NodePort
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app: jenkins
+---
+# Service for jenkins-agents
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins-agent
+  namespace: operations
+spec:
+  ports:
+    - port: 50000
+      targetPort: 50000
+      name: slavelistener
+  selector:
+    app: jenkins
+
+
+
+
+
+
